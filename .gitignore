@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local/persistent database files
+/data/
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Logs / OS / editors
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

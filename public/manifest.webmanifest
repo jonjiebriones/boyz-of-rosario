@@ -1,0 +1,10 @@
+{
+  "name":"Boyz of Rosario Official Portal",
+  "short_name":"Boyz of Rosario",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#f4f7fb",
+  "theme_color":"#ffffff",
+  "description":"Official Boyz of Rosario member, verification, live map, administration, and attendance portal.",
+  "icons":[{"src":"/assets/logo.jpg","sizes":"512x512","type":"image/jpeg","purpose":"any maskable"}]
+}

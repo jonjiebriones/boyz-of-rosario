@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Boyz of Rosario">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/assets/logo.jpg">
+  <title>Admin Sign In — Boyz of Rosario</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/theme.js" defer></script>
+  <style>
+    .admin-login-page{min-height:100vh;display:grid;place-items:center;padding:88px 20px 36px;position:relative}
+    .admin-login-card{width:min(100%,620px);padding:40px;border-radius:24px;background:rgba(13,25,38,.96);border:1px solid rgba(255,255,255,.12);box-shadow:0 24px 70px rgba(0,0,0,.28);color:#f6f8fb}
+    .admin-login-brand{text-align:center;margin-bottom:28px}.admin-login-brand .logo{width:110px;height:110px;border-radius:50%;object-fit:cover;margin:0 auto 18px}.admin-login-brand h1{margin:0 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:2rem}.admin-login-brand p{margin:0;color:#b9c6d5}
+    .admin-login-card .field label{color:#cbd6e2}.admin-login-card .field input{background:#f4f7fb;color:#0d1926;border:2px solid transparent}.admin-login-card .field input:focus{border-color:#d9a536;outline:none;box-shadow:0 0 0 3px rgba(217,165,54,.18)}
+    .admin-login-card .btn.primary{min-height:58px;font-size:1.05rem;font-weight:700}.admin-login-links{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:24px}.admin-login-links a{color:#efbd4c;text-decoration:none}.admin-login-links a:hover{text-decoration:underline}
+    .admin-login-card .alert{display:none;margin:0 0 20px;padding:14px 16px;border-radius:12px;background:#3a1717;border:1px solid #7d3030;color:#ffd6d6}.admin-login-card .alert.show{display:block}
+    .form-theme-toggle{position:fixed;top:18px;right:18px;z-index:20}
+    body[data-theme="light"] .admin-login-card{background:rgba(255,255,255,.97);color:#102033;border-color:#d7dee7}.photo-bg[data-theme="light"] .admin-login-brand p{color:#5f6d7d}.photo-bg[data-theme="light"] .admin-login-card .field label{color:#33475b}.photo-bg[data-theme="light"] .admin-login-card .field input{background:#fff;color:#102033;border-color:#cbd6e2}.photo-bg[data-theme="light"] .admin-login-card .alert{background:#fff0f0;color:#a51d1d;border-color:#e7aaaa}
+    @media(max-width:640px){.admin-login-page{padding:76px 14px 24px;align-items:start}.admin-login-card{padding:26px 20px;border-radius:20px}.admin-login-brand .logo{width:88px;height:88px}.admin-login-brand h1{font-size:1.65rem}.admin-login-links{font-size:.95rem}}
+  </style>
+</head>
+<body class="photo-bg">
+  <button class="btn ghost form-theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme">🌙 Dark</button>
+  <main class="admin-login-page">
+    <section class="admin-login-card" aria-labelledby="adminLoginTitle">
+      <div class="admin-login-brand">
+        <img class="logo" src="/assets/logo.jpg" alt="Boyz of Rosario logo">
+        <h1 id="adminLoginTitle">Admin Sign In</h1>
+        <p>Authorized administrators only.</p>
+      </div>
+      <div id="alert" class="alert" role="alert" aria-live="polite"></div>
+      <form id="form" novalidate>
+        <div class="field"><label for="email">EMAIL</label><input id="email" type="email" required autocomplete="username" placeholder="Admin email"></div>
+        <div class="field"><label for="password">PASSWORD</label><input id="password" type="password" required autocomplete="current-password" placeholder="Admin password"></div>
+        <button id="submitBtn" class="btn primary" type="submit" style="width:100%">Sign in to Admin Portal</button>
+      </form>
+      <nav class="admin-login-links" aria-label="Public links"><a href="/">← Home</a><span>·</span><a href="/verify">Verify member</a><span>·</span><a href="/register">Register</a></nav>
+    </section>
+  </main>
+<script>
+const formEl=document.getElementById('form');
+const emailEl=document.getElementById('email');
+const passwordEl=document.getElementById('password');
+const alertEl=document.getElementById('alert');
+const submitBtn=document.getElementById('submitBtn');
+function showError(message){alertEl.textContent=message;alertEl.classList.add('show')}
+formEl.addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  alertEl.classList.remove('show');
+  if(!emailEl.value.trim()||!passwordEl.value){showError('Enter the admin email and password.');return}
+  submitBtn.disabled=true;submitBtn.textContent='Signing in…';
+  try{
+    const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({email:emailEl.value.trim(),password:passwordEl.value})});
+    const contentType=r.headers.get('content-type')||'';
+    const d=contentType.includes('application/json')?await r.json():{};
+    if(!r.ok)throw new Error(d.error||`Sign in failed (${r.status}).`);
+    window.location.assign('/admin');
+  }catch(err){showError(err.message||'Unable to sign in. Please try again.');submitBtn.disabled=false;submitBtn.textContent='Sign in to Admin Portal'}
+});
+</script>
+</body>
+</html>

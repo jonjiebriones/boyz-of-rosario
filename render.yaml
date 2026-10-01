@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: boyz-of-rosario
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: boyz-data
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_NAME
+        sync: false
+      - key: ADMIN_REGISTRATION_CODE
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: MAP_LAT
+        value: "13.8454"
+      - key: MAP_LNG
+        value: "121.2060"
