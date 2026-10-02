@@ -6,7 +6,8 @@ const {createPersistentSQLite}=require('./persistent-db');
 const app=express(),server=http.createServer(app),io=new Server(server);
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:5*1024*1024,files:10},fileFilter:(req,f,cb)=>cb(null,/^image\/(jpeg|png|webp|gif)$/.test(f.mimetype))});
 const PORT=Number(process.env.PORT||3000),MAP_LAT=Number(process.env.MAP_LAT||13.8454),MAP_LNG=Number(process.env.MAP_LNG||121.2060);
-app.set('trust proxy',1);app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:'100kb'}));app.use(express.urlencoded({extended:false}));app.use(rateLimit({windowMs:15*60*1000,limit:300,standardHeaders:'draft-8',legacyHeaders:false}));app.use(express.static(path.join(__dirname,'public')));
+app.set('trust proxy',1);app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:'100kb'}));app.use(express.urlencoded({extended:false}));app.use(express.static(path.join(__dirname,'public')));app.use(rateLimit({windowMs:15*60*1000,limit:300,standardHeaders:'draft-8',legacyHeaders:false}));
+
 const db=await createPersistentSQLite();
 const dataDir='supabase://'+(process.env.SUPABASE_STORAGE_BUCKET||'boyz-data');
 
