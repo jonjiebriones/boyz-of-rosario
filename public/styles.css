@@ -911,3 +911,9 @@ html[data-theme="light"] .form-card,html[data-theme="light"] .panel-card,html[da
 html[data-theme="light"] .btn.primary{background:linear-gradient(180deg,#f02ca9,#c51282);color:#fff;border-color:#fff;box-shadow:0 0 7px rgba(255,255,255,.9),0 0 18px rgba(255,47,179,.3)}
 html[data-theme="light"] .btn:hover,html[data-theme="light"] .mini:hover{border-color:#e11a98;box-shadow:0 0 7px rgba(255,255,255,.85),0 0 16px rgba(255,47,179,.22)}
 @media(max-width:700px){html[data-theme="dark"] .public-nav.open{background:rgba(15,3,12,.985)!important;border-color:rgba(255,98,200,.52)!important;box-shadow:0 18px 40px rgba(0,0,0,.55),0 0 24px rgba(255,47,179,.22)!important}}
+
+/* Admin menu click/stacking reliability patch */
+.admin-official-topbar{position:relative!important;z-index:12000!important;isolation:isolate}
+.admin-header-actions,.admin-menu-toggle{position:relative;z-index:12002;pointer-events:auto}
+.admin-account-menu{position:fixed!important;top:82px!important;right:18px!important;left:auto!important;z-index:12010!important;pointer-events:auto;max-height:calc(100dvh - 100px)!important;overflow:auto}
+@media(max-width:760px){.admin-account-menu{top:76px!important;left:10px!important;right:10px!important;width:auto!important;max-width:none!important}}
