@@ -104,7 +104,24 @@ app.post('/api/admin/profile/photo',requireAdmin,upload.single('photo'),(req,res
 app.post('/api/admin/admins/:id/motorcycle-photo',requireAdmin,upload.single('photo'),(req,res)=>{try{const id=Number(req.params.id);if(!db.prepare('SELECT id FROM admin_profiles WHERE id=?').get(id))return res.status(404).json({error:'Administrator not found.'});if(!req.file)return res.status(400).json({error:'Choose a JPG, PNG or WebP motorcycle photo up to 5 MB.'});const data=`data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;db.prepare('UPDATE admin_profiles SET motorcycle_photo=? WHERE id=?').run(data,id);res.json({ok:true,motorcyclePhoto:data,message:'Admin motorcycle photo updated. Admin replacements are unlimited and do not require approval.'})}catch(err){console.error('Admin motorcycle photo upload error:',err);res.status(500).json({error:'Unable to save admin motorcycle photo.'})}});
 app.get('/api/admin/members',requireAdmin,(req,res)=>res.json(db.prepare(`SELECT id,badge_number,role,full_name,nickname,motorcycle,phone,status,lat,lng,accuracy,last_seen,live_started_at,live_until,created_at,motorcycle_photo,motorcycle_photo_changes,motorcycle_photo_extra_credits FROM members ORDER BY CASE WHEN badge_number IS NULL OR badge_number='' THEN 1 ELSE 0 END, CASE WHEN substr(upper(badge_number),5) NOT GLOB '*[^0-9]*' THEN CAST(substr(upper(badge_number),5) AS INTEGER) ELSE 2147483647 END, upper(badge_number), upper(full_name)`).all()));
 app.patch('/api/admin/members/:id',requireAdmin,(req,res)=>{const {badgeNumber,fullName,nickname,motorcycle,phone}=req.body||{};if(!fullName||String(fullName).trim().length<2)return res.status(400).json({error:'Full name is required.'});let badge=null;try{badge=normalizeBadge(badgeNumber)}catch(e){return res.status(400).json({error:e.message})}if(badgeInUse(badge,{memberId:Number(req.params.id)}))return res.status(409).json({error:'That badge number is already registered to a member or administrator.'});const cleanPhone=digits(phone);if(cleanPhone.length<7)return res.status(400).json({error:'A valid phone number is required.'});const duplicate=registrationDuplicate(fullName,cleanPhone,{excludeMemberId:Number(req.params.id),noBadge:!badge});if(duplicate)return res.status(409).json({error:'Those details already belong to another registered member.'});db.prepare("UPDATE members SET badge_number=?,role='member',full_name=?,nickname=?,motorcycle=?,phone=? WHERE id=?").run(badge,String(fullName).trim(),nickname||'',motorcycle||'',cleanPhone,req.params.id);io.to('admins').emit('members:changed');res.json({ok:true})});
-app.patch('/api/admin/members/:id/status',requireAdmin,async(req,res)=>{try{const id=Number(req.params.id);const status=String(req.body?.status||'');if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid member ID.'});if(!['pending','approved','suspended'].includes(status))return res.status(400).json({error:'Invalid status.'});const result=db.prepare('UPDATE members SET status=? WHERE id=?').run(status,id);if(!result.changes)return res.status(404).json({error:'Member not found. Refresh the member list and try again.'});if(typeof db.persistNow==='function')await db.persistNow();io.to('admins').emit('members:changed');return res.json({ok:true,id,status});}catch(err){console.error('Admin member status update failed:',err);if(!res.headersSent)return res.status(500).json({error:'Unable to update member status. Please check the Render logs and try again.'});}});
+app.patch('/api/admin/members/:id/status',requireAdmin,async(req,res)=>{
+  const id=Number(req.params.id);
+  const status=String(req.body?.status||'');
+  if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Invalid member ID.'});
+  if(!['pending','approved','suspended'].includes(status))return res.status(400).json({error:'Invalid status.'});
+  try{
+    const result=db.prepare('UPDATE members SET status=? WHERE id=?').run(status,id);
+    if(!result.changes)return res.status(404).json({error:'Member not found. Refresh the member list and try again.'});
+    io.to('admins').emit('members:changed');
+    // Reply promptly to avoid a Render 502 while Supabase Storage is slow. persistNow
+    // is still invoked immediately; failures are logged for diagnosis.
+    res.json({ok:true,id,status,persistence:'saving'});
+    if(typeof db.persistNow==='function')db.persistNow().then(()=>console.log('Member status saved to Supabase Storage.')).catch(err=>console.error('Member status changed but database save failed:',err));
+  }catch(err){
+    console.error('Admin member status update failed:',err);
+    if(!res.headersSent)return res.status(500).json({error:'Unable to update member status. Check Render application logs.'});
+  }
+});
 app.delete('/api/admin/members/:id',requireAdmin,(req,res)=>{db.prepare('DELETE FROM members WHERE id=?').run(req.params.id);io.to('admins').emit('members:changed');res.json({ok:true})});
 
 
