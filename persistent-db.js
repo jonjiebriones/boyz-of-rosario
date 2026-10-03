@@ -13,8 +13,9 @@ class PersistentSQLite {
     this.localPath = localPath;
     this.db = new SQL.Database(bytes || undefined);
     this.persistTimer = null;
-    this.persisting = false;
+    this.persistPromise = null;
     this.persistAgain = false;
+    this.revision = 0;
     this.initializing = false;
   }
 
@@ -83,39 +84,70 @@ class PersistentSQLite {
 
   schedulePersist() {
     if (this.initializing) return;
+    this.revision += 1;
     clearTimeout(this.persistTimer);
+    // Batch quick successive edits/approvals into one database upload. The
+    // database is a single SQLite file in Supabase Storage, so uploading it
+    // for every individual SQL statement creates unnecessary load.
     this.persistTimer = setTimeout(() => {
-      this.persistNow().catch(err => console.error('Supabase database save failed:', err.message));
-    }, 350);
+      this.persistTimer = null;
+      this.persistNow().catch(err => {
+        console.error('Supabase database save failed:', err && err.message ? err.message : err);
+        // Retry a failed cloud save without crashing the web service.
+        this.persistTimer = setTimeout(() => {
+          this.persistTimer = null;
+          this.persistNow().catch(retryErr => console.error('Supabase database retry failed:', retryErr && retryErr.message ? retryErr.message : retryErr));
+        }, 5000);
+      });
+    }, 1200);
   }
 
   async persistNow() {
+    clearTimeout(this.persistTimer);
+    this.persistTimer = null;
     if (!this.supabase && !this.localPath) return;
-    if (this.persisting) {
+
+    // Only one upload can run at a time. If writes happen during an upload,
+    // take one fresh snapshot after it finishes instead of starting parallel
+    // exports/uploads of the entire database.
+    if (this.persistPromise) {
       this.persistAgain = true;
-      return;
+      return this.persistPromise;
     }
-    this.persisting = true;
-    try {
-      const bytes = this.db.export();
-      if (this.supabase) {
-        const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
-        const { error } = await this.supabase.storage.from(BUCKET).upload(DB_FILE, blob, {
-          contentType: 'application/x-sqlite3',
-          cacheControl: '0',
-          upsert: true
-        });
-        if (error) throw error;
-        console.log('Database saved to Supabase Storage.');
-      } else if (this.localPath) {
-        fs.mkdirSync(path.dirname(this.localPath), { recursive: true });
-        fs.writeFileSync(this.localPath, Buffer.from(bytes));
-      }
-    } finally {
-      this.persisting = false;
-      if (this.persistAgain) {
+
+    this.persistPromise = (async () => {
+      do {
         this.persistAgain = false;
-        this.schedulePersist();
+        clearTimeout(this.persistTimer);
+        this.persistTimer = null;
+        const snapshotRevision = this.revision;
+        const bytes = this.db.export();
+        if (this.supabase) {
+          const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
+          const { error } = await this.supabase.storage.from(BUCKET).upload(DB_FILE, blob, {
+            contentType: 'application/x-sqlite3',
+            cacheControl: '0',
+            upsert: true
+          });
+          if (error) throw error;
+          console.log('Database saved to Supabase Storage.');
+        } else if (this.localPath) {
+          fs.mkdirSync(path.dirname(this.localPath), { recursive: true });
+          fs.writeFileSync(this.localPath, Buffer.from(bytes));
+        }
+        if (this.revision !== snapshotRevision) this.persistAgain = true;
+      } while (this.persistAgain);
+    })();
+
+    try {
+      await this.persistPromise;
+    } finally {
+      this.persistPromise = null;
+      if (this.persistAgain && !this.persistTimer) {
+        this.persistTimer = setTimeout(() => {
+          this.persistTimer = null;
+          this.persistNow().catch(err => console.error('Supabase follow-up save failed:', err && err.message ? err.message : err));
+        }, 250);
       }
     }
   }

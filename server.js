@@ -132,10 +132,10 @@ app.patch('/api/admin/members/:id/status',requireAdmin,async(req,res)=>{
     const result=db.prepare('UPDATE members SET status=? WHERE id=?').run(status,id);
     if(!result.changes)return res.status(404).json({error:'Member not found. Refresh the member list and try again.'});
     io.to('admins').emit('members:changed');
-    // Reply promptly to avoid a Render 502 while Supabase Storage is slow. persistNow
-    // is still invoked immediately; failures are logged for diagnosis.
-    res.json({ok:true,id,status,persistence:'saving'});
-    if(typeof db.persistNow==='function')db.persistNow().then(()=>console.log('Member status saved to Supabase Storage.')).catch(err=>console.error('Member status changed but database save failed:',err));
+    // Return quickly. persistent-db.js batches and serializes the cloud save,
+    // avoiding a full SQLite export/upload during the approval request itself.
+    // The save is retried in the background if Supabase Storage is temporarily unavailable.
+    res.json({ok:true,id,status,persistence:'queued'});
   }catch(err){
     console.error('Admin member status update failed:',err);
     if(!res.headersSent)return res.status(500).json({error:'Unable to update member status. Check Render application logs.'});
