@@ -5,6 +5,16 @@ const {createPersistentSQLite}=require('./persistent-db');
 (async()=>{
 const app=express(),server=http.createServer(app),io=new Server(server);
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:3*1024*1024,files:4},fileFilter:(req,f,cb)=>cb(null,/^image\/(jpeg|png|webp)$/.test(f.mimetype))});
+const galleryUpload=multer({
+  storage:multer.memoryStorage(),
+  limits:{fileSize:5*1024*1024,files:10},
+  fileFilter:(req,f,cb)=>{
+    if(/^image\/(jpeg|png|webp)$/.test(f.mimetype)) return cb(null,true);
+    const err=new multer.MulterError('LIMIT_UNEXPECTED_FILE','photos');
+    err.message='Only JPG, PNG, or WebP images are allowed.';
+    cb(err);
+  }
+});
 const PORT=Number(process.env.PORT||3000),MAP_LAT=Number(process.env.MAP_LAT||13.8454),MAP_LNG=Number(process.env.MAP_LNG||121.2060);
 app.set('trust proxy',1);app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:'100kb'}));app.use(express.urlencoded({extended:false}));app.use(rateLimit({windowMs:15*60*1000,limit:300,standardHeaders:'draft-8',legacyHeaders:false}));app.use(express.static(path.join(__dirname,'public')));
 const db=await createPersistentSQLite();
@@ -174,8 +184,35 @@ app.post('/api/admin/events/:id/scan-attendance',requireAdmin,(req,res)=>{try{co
 app.get('/api/admin/events/:id/photos',requireAdmin,(req,res)=>res.json(db.prepare('SELECT id,photo_data,original_name,created_at FROM event_photos WHERE event_id=? ORDER BY id DESC').all(req.params.id)));app.post('/api/admin/events/:id/photos',requireAdmin,upload.array('photos',4),async(req,res)=>{try{const e=db.prepare('SELECT id FROM events WHERE id=?').get(req.params.id);if(!e)return res.status(404).json({error:'Event not found.'});if(!req.files?.length)return res.status(400).json({error:'Please select at least one image.'});const ins=db.prepare('INSERT INTO event_photos(event_id,photo_data,original_name) VALUES(?,?,?)');for(const f of req.files){const url=await storeImage(f,`events/${e.id}`);ins.run(e.id,url,f.originalname)}const c=db.prepare('SELECT photo_data FROM event_photos WHERE event_id=? ORDER BY id ASC LIMIT 1').get(e.id);if(c)db.prepare('UPDATE events SET photo_cover=? WHERE id=?').run(c.photo_data,e.id);res.json({ok:true,count:req.files.length})}catch(err){console.error('Event photo upload error:',err);res.status(500).json({error:'Unable to save event photos. '+String(err.message||'').slice(0,180)})}});app.delete('/api/admin/event-photos/:id',requireAdmin,(req,res)=>{const p=db.prepare('SELECT event_id FROM event_photos WHERE id=?').get(req.params.id);if(!p)return res.status(404).json({error:'Photo not found.'});db.prepare('DELETE FROM event_photos WHERE id=?').run(req.params.id);const c=db.prepare('SELECT photo_data FROM event_photos WHERE event_id=? ORDER BY id ASC LIMIT 1').get(p.event_id);db.prepare('UPDATE events SET photo_cover=? WHERE id=?').run(c?.photo_data||null,p.event_id);res.json({ok:true})});
 
 app.get('/api/admin/gallery',requireAdmin,(req,res)=>res.json(db.prepare('SELECT id,title,photo_data,original_name,created_at FROM gallery_images ORDER BY id DESC').all()));
-app.post('/api/admin/gallery',requireAdmin,upload.array('photos',4),async(req,res)=>{try{if(!req.files?.length)return res.status(400).json({error:'Please select at least one image.'});const title=String(req.body?.title||'').trim().slice(0,100);const ins=db.prepare('INSERT INTO gallery_images(title,photo_data,original_name) VALUES(?,?,?)');for(const f of req.files){const url=await storeImage(f,'gallery');ins.run(title,url,f.originalname)}res.json({ok:true,count:req.files.length})}catch(err){console.error('Gallery upload error:',err);res.status(500).json({error:'Unable to store gallery images. '+String(err.message||'').slice(0,180)})}});
+app.post('/api/admin/gallery',requireAdmin,galleryUpload.array('photos',10),async(req,res)=>{
+  try{
+    if(!req.files?.length)return res.status(400).json({error:'Please select at least one image.'});
+    const title=String(req.body?.title||'').trim().slice(0,100);
+    const ins=db.prepare('INSERT INTO gallery_images(title,photo_data,original_name) VALUES(?,?,?)');
+    for(const f of req.files){
+      const url=await storeImage(f,'gallery');
+      ins.run(title,url,f.originalname);
+    }
+    res.json({ok:true,count:req.files.length});
+  }catch(err){
+    console.error('Gallery upload error:',err);
+    if(err instanceof multer.MulterError){
+      if(err.code==='LIMIT_FILE_SIZE')return res.status(413).json({error:'Image too large. Maximum size is 5 MB per image.'});
+      if(err.code==='LIMIT_FILE_COUNT')return res.status(400).json({error:'Too many images. Maximum is 10 images per upload.'});
+      return res.status(400).json({error:err.message||'Invalid image upload.'});
+    }
+    res.status(500).json({error:'Unable to store gallery images. '+String(err.message||'').slice(0,180)});
+  }
+});
 app.delete('/api/admin/gallery/:id',requireAdmin,(req,res)=>{const x=db.prepare('DELETE FROM gallery_images WHERE id=?').run(req.params.id);if(!x.changes)return res.status(404).json({error:'Stored image not found.'});res.json({ok:true})});
+app.use((err,req,res,next)=>{
+  if(err instanceof multer.MulterError){
+    if(err.code==='LIMIT_FILE_SIZE')return res.status(413).json({error:'Image too large. Maximum size is 3 MB for this upload.'});
+    if(err.code==='LIMIT_FILE_COUNT')return res.status(400).json({error:'Too many images were selected for this upload.'});
+    return res.status(400).json({error:err.message||'Invalid image upload.'});
+  }
+  next(err);
+});
 app.use('/api',(req,res)=>res.status(404).json({error:'API endpoint not found.'}));
 io.on('connection',s=>{s.on('admin:join',()=>{const r={headers:{cookie:s.handshake.headers.cookie||''}};if(getSession(r)?.adminId)s.join('admins')});s.on('member:join-live',()=>{const r={headers:{cookie:s.handshake.headers.cookie||''}};const ms=readMemberSession(r);if(ms?.memberId&&db.prepare('SELECT id FROM members WHERE id=?').get(ms.memberId))s.join('members-live')})});
 app.get('/admin',(q,r)=>r.sendFile(path.join(__dirname,'public','admin.html')));app.get('/admin/login',(q,r)=>r.sendFile(path.join(__dirname,'public','admin-login.html')));app.get('/register',(q,r)=>r.sendFile(path.join(__dirname,'public','register.html')));app.get('/member',(q,r)=>r.sendFile(path.join(__dirname,'public','member.html')));app.get('/member/:token',(req,res)=>res.redirect(302,'/member'));
