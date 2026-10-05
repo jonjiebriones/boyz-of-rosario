@@ -1,0 +1,22 @@
+BOYZ OF ROSARIO - ADMIN POSITIONS UPDATE
+
+Included:
+- Admin position choices: Founder, Lead, Vice Lead, Secretary, Treasurer, Media 1, Media 2, Moderator 1, Moderator 2.
+- Admins dashboard can add an administrator profile directly.
+- Treasurer can be added without a badge and cannot be created through public registration.
+- Other positions require a badge number when added/edited.
+- Existing database is migrated automatically by adding a position column if missing.
+- Admin profile count is set to a maximum of 9.
+- Public admin registration has a position selector; Treasurer must be added from the Admins dashboard.
+
+IMPORTANT ACCESS NOTE:
+This project currently uses one shared admin login configured by ADMIN_EMAIL and ADMIN_PASSWORD. Adding a Treasurer profile does not create separate credentials. The Treasurer uses the same shared admin login and therefore has the same dashboard permissions as the other administrators. Do not share the login with anyone who should not have full admin access.
+
+DEPLOY:
+1. Extract the ZIP into your project folder and replace matching files.
+2. Keep .env, .git, and your Supabase database/storage settings. Do not delete your database or bucket.
+3. Run:
+   git add server.js public/admin.html public/register.html
+   git commit -m "Add admin positions and treasurer profile"
+   git push
+4. Wait for Render to finish deployment, then refresh the Admins tab.

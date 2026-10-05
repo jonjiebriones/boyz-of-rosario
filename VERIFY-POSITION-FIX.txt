@@ -1,0 +1,17 @@
+BOYZ OF ROSARIO — VERIFY ADMIN POSITION DISPLAY FIX
+
+This update makes administrator badge verification display only the assigned position name (for example, Founder, Lead, Vice Lead, Secretary, Treasurer, Media 1, Media 2, Moderator 1, Moderator 2). It does not show the words “ADMIN POSITION:” or a bordered position box. It also disables browser/proxy caching on /verify so the latest page is served after deployment.
+
+INSTALL
+1. Extract this ZIP.
+2. Copy the extracted public/verify.html to C:\Users\Jonjie\OneDrive\Desktop\bor_new\public\verify.html and replace the old file.
+3. Copy the extracted server.js to C:\Users\Jonjie\OneDrive\Desktop\bor_new\server.js and replace the old file.
+4. Open Command Prompt in C:\Users\Jonjie\OneDrive\Desktop\bor_new and run: 
+
+  git add public/verify.html server.js
+  git commit -m "Fix admin position display on badge verification"
+  git push
+
+5. In Render, wait until the newest deployment is Live. Then open https://boyz-of-rosario.onrender.com/verify?badge=BOR-002 and press Ctrl+F5.
+
+If git says “nothing to commit”, the files were likely copied into the wrong folder. Make sure you replaced files inside the existing bor_new folder, not just inside the extracted ZIP folder.

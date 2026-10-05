@@ -1,0 +1,32 @@
+BOYZ OF ROSARIO — ADMIN POSITION FIX
+
+Changes:
+- Added a position selector to Edit Registered Admin.
+- Choices: Founder, Lead, Vice Lead, Secretary, Treasurer, Media 1, Media 2, Moderator 1, Moderator 2.
+- Positions assigned to other admins are disabled in the editor.
+- Server rejects duplicate positions, even if someone bypasses the browser.
+- Admin badge verification returns and displays the position name only (for example, “Moderator 1”), without an “ADMIN POSITION:” label.
+- Admin directory cards show assigned positions.
+- Admin count label reflects the 9-profile limit.
+- Existing admin profiles are migrated automatically with an empty position if they do not already have one.
+
+REPLACE FILES
+Copy these files from this ZIP into your existing bor_new folder, replacing matching files:
+  server.js
+  public/admin.html
+  public/verify.html
+
+Do not replace .env, .git, Supabase settings, or database files.
+
+COMMAND PROMPT (run in C:\Users\Jonjie\OneDrive\Desktop\bor_new):
+  git add server.js public/admin.html public/verify.html
+  git commit -m "Add unique admin positions and badge verification display"
+  git push
+
+After Render deploys:
+1. Open /admin and go to Admins.
+2. Click Edit Admin Profile.
+3. Choose an available position and save.
+4. Verify that admin's badge at /verify. The result should show only the position name, such as “Moderator 1”.
+
+This update does not automatically assign positions to existing admins. Assign each position from Admins > Edit Admin Profile. Treasurer can still have no badge, because the existing admin badge field is optional.

@@ -1,0 +1,26 @@
+BOYZ OF ROSARIO — IMAGE UPLOAD + RENDER MEMORY FIX
+
+WHAT THIS FIX CHANGES
+- Stores uploaded photos in a separate Supabase Storage bucket (`boyz-media`) instead of embedding every image as base64 in the SQLite database. This keeps the database and admin API responses much smaller and reduces Render Free (512 MB) memory spikes.
+- Applies to member motorcycle photos, admin profile/motorcycle photos, gallery images, event photos, and event attendance proof photos.
+- Limits uploads to JPG, PNG, or WebP, up to 3 MB each; up to 4 images per gallery/event upload.
+- On startup, migrates legacy base64 images from the database to Supabase Storage, compacts the database, and saves the smaller database back to the existing `boyz-data` bucket.
+- Keeps the existing database bucket and existing member/admin records; this is not a reset.
+
+IMPORTANT SUPABASE SETUP
+The app will try to create a private database bucket (`boyz-data`, if missing) and a public image bucket (`boyz-media`, if missing) using the service secret already configured in Render. The service secret must have Storage permissions. Do not paste it into chat or commit it to GitHub. You can override the media bucket with `SUPABASE_MEDIA_BUCKET`.
+
+REPLACE FILES
+1. Download and extract this ZIP.
+2. Copy the extracted project files into `C:\Users\Jonjie\OneDrive\Desktop\bor_new`, choose Replace files, and do not delete `.git` or your Render environment variables.
+3. Open Command Prompt in the `bor_new` folder and run:
+
+   git add server.js persistent-db.js .env.example public
+   git commit -m "Store uploaded images in Supabase Storage to prevent Render OOM"
+   git push
+
+4. Wait for Render to deploy and show Live. The first startup can take longer because existing base64 images are being migrated. Do not repeatedly restart the service during migration.
+5. Test with one small JPG first. Check Render logs for `Moved ... legacy images` and `Database saved to Supabase Storage.`
+
+IF THE SERVICE STILL OOMs
+If Render still reports memory above 512 MB during startup, the old SQLite database may already be too large to migrate safely on the Free instance. Do not delete the Supabase database bucket. Send the new Render log lines around startup so we can plan a safe migration without losing your member/admin records.

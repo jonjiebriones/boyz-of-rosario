@@ -1,0 +1,28 @@
+BOYZ OF ROSARIO — FOLLOW-UP RENDER 502 FIX
+
+This source-only update addresses two causes of instability:
+- Admin member and administrator list APIs return metadata only, not large base64 image data.
+- SQLite-to-Supabase Storage persistence is debounced and serialized so multiple approvals/updates do not start overlapping full database exports/uploads. Temporary cloud save errors are logged and retried.
+- Member approval responds promptly with JSON; the dashboard keeps the new status visible while persistence runs in the background.
+- Includes the previous admin menu click/stacking fixes.
+
+BEFORE YOU START
+1. Download and extract this ZIP.
+2. Copy its files into C:\Users\Jonjie\OneDrive\Desktop\bor_new and choose Replace files.
+3. Do NOT delete .env, .git, your Supabase bucket, or any database data. This ZIP intentionally does not contain those secrets/data.
+
+COMMANDS (run from Command Prompt in the bor_new folder, one at a time):
+  git add server.js persistent-db.js public/admin.html public/styles.css
+  git commit -m "Stabilize admin approval and cloud database saves"
+  git push
+
+Then wait for Render's latest deployment to show Live. Open https://boyz-of-rosario.onrender.com/admin and press Ctrl+F5.
+
+TEST CAREFULLY
+- Open All Members and Admins.
+- Approve ONE pending member only.
+- Wait a few seconds for the cloud save, then refresh and verify the status remains approved.
+- Check Render logs for "Database saved to Supabase Storage." or "Supabase database save failed".
+
+IMPORTANT LIMITATION
+This reduces overlapping database uploads and oversized API responses, but no source patch can guarantee zero future errors without testing against the live Render instance and Supabase configuration. If the Render 502 page still appears, the web service itself is unavailable; inspect the Render Events/logs around the exact timestamp before retrying approvals. Do not repeatedly click Approve while the service is unavailable.

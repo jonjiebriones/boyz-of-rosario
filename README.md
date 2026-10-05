@@ -66,3 +66,8 @@ Choose the **Free** web service plan.
 - Do not use Render's local filesystem as the production database.
 - Keep `SUPABASE_SECRET_KEY` private. Supabase documents secret keys as server-only credentials that bypass Row Level Security.
 - Supabase Free Storage currently has a 50 MB maximum file size per upload. This application limits individual image uploads to 5 MB.
+
+
+## Cloudflare R2 image storage
+
+The portal supports Cloudflare R2 for member motorcycle photos, admin photos, event photos, gallery images, and attendance proofs. Configure `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, and `R2_PUBLIC_BASE_URL` in the Render environment. New uploads will go directly to R2 and the database will store only the public image URL. If R2 is not configured, the app falls back to the existing Supabase media bucket. Existing Supabase image URLs remain valid.

@@ -160,8 +160,11 @@ async function createPersistentSQLite() {
     if (error && !/already exists/i.test(error.message || '')) throw error;
   }
 
+  // When Cloudflare R2 is configured, media no longer needs to live in Supabase Storage.
+  // Keep the legacy bucket available only for deployments that have not switched to R2 yet.
+  const r2Enabled = !!(process.env.R2_ENDPOINT && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET && process.env.R2_PUBLIC_BASE_URL);
   const mediaBucket = process.env.SUPABASE_MEDIA_BUCKET || 'boyz-media';
-  if (!(buckets || []).some(b => b.name === mediaBucket)) {
+  if (!r2Enabled && !(buckets || []).some(b => b.name === mediaBucket)) {
     const { error } = await supabase.storage.createBucket(mediaBucket, { public: true, fileSizeLimit: '3MB', allowedMimeTypes: ['image/jpeg','image/png','image/webp','image/gif'] });
     if (error && !/already exists/i.test(error.message || '')) throw error;
   }
