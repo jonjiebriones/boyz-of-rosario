@@ -1,0 +1,25 @@
+BOYZ OF ROSARIO — FIXED BUILD
+
+This build resolves the current Git conflict and includes the latest admin/image fixes.
+
+Main fixes:
+- Resolved the server.js merge conflict.
+- Keeps Supabase Storage database persistence.
+- Keeps optional Cloudflare R2 media support, with Supabase Storage fallback.
+- Adds Supabase media-bucket setup and an image proxy so stored Supabase images display reliably.
+- Reduces /api/admin/members response size by returning only the fields needed by the admin list/map and safely limiting text lengths.
+- Member approve/suspend/restore now returns immediately and queues database persistence instead of exporting the entire SQLite database on every click.
+- Database persistence is debounced to reduce Render Free memory spikes when several admin changes happen close together.
+- Uses a zero-copy Buffer for Supabase database uploads where possible.
+- Avoids VACUUM during Render startup because VACUUM can temporarily require another full database copy and exceed the 512 MB Render Free memory limit.
+- Adds a JSON API error handler so API failures return JSON instead of an HTML error page.
+- Keeps admin position choices and the 9-admin limit.
+- Removes the visible "ADMIN POSITION:" wording from public badge verification; only the assigned position name is shown.
+- Keeps admin logo upload/change support.
+- Supports JPG, PNG, WebP and GIF uploads.
+
+IMPORTANT:
+- Do not replace or delete your Render environment variables.
+- Do not commit .env or Supabase secret keys.
+- This ZIP intentionally does not include the .git directory, node_modules, or a database file.
+- Your existing Supabase boyz-data database remains the source of your member/admin records.
