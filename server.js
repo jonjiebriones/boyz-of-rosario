@@ -9,7 +9,7 @@ const galleryUpload=multer({
   storage:multer.memoryStorage(),
   limits:{fileSize:5*1024*1024,files:10},
   fileFilter:(req,f,cb)=>{
-    if(/^image\/(jpeg|png|webp)$/.test(f.mimetype)) return cb(null,true);
+    if(/^image\/(jpeg|png|webp|gif)$/.test(f.mimetype)) return cb(null,true);
     const err=new multer.MulterError('LIMIT_UNEXPECTED_FILE','photos');
     err.message='Only JPG, PNG, or WebP images are allowed.';
     cb(err);
@@ -25,10 +25,90 @@ const R2_PUBLIC_BASE_URL=String(process.env.R2_PUBLIC_BASE_URL||'').trim().repla
 const r2Enabled=!!(process.env.R2_ENDPOINT&&process.env.R2_ACCESS_KEY_ID&&process.env.R2_SECRET_ACCESS_KEY&&R2_BUCKET&&R2_PUBLIC_BASE_URL);
 const r2=r2Enabled?new S3Client({region:'auto',endpoint:String(process.env.R2_ENDPOINT).trim(),credentials:{accessKeyId:String(process.env.R2_ACCESS_KEY_ID).trim(),secretAccessKey:String(process.env.R2_SECRET_ACCESS_KEY).trim()}}):null;
 if(r2Enabled) console.log(`Cloudflare R2 image storage enabled: ${R2_BUCKET}`); else console.log('Cloudflare R2 image storage not configured; using Supabase image storage fallback.');
+
+async function ensureMediaBucket(){
+  if(!db.supabase || r2Enabled) return;
+  try{
+    const {data,error}=await db.supabase.storage.getBucket(MEDIA_BUCKET);
+    if(error || !data){
+      const created=await db.supabase.storage.createBucket(MEDIA_BUCKET,{public:false,fileSizeLimit:'5242880',allowedMimeTypes:['image/jpeg','image/png','image/webp','image/gif']});
+      if(created.error && !/already exists/i.test(created.error.message||'')) throw created.error;
+    }
+    console.log(`Supabase media bucket ready: ${MEDIA_BUCKET}`);
+  }catch(err){ console.warn(`Media bucket setup warning: ${err.message||err}`); }
+}
+
+function mediaProxyUrl(bucket,key){
+  return `/api/media?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(key)}`;
+}
+function toMediaProxyUrl(value){
+  if(typeof value!=='string' || !value) return value;
+  if(value.startsWith('data:image/')) return value;
+  if(value.startsWith('/api/media?')) return value;
+  // Older versions sometimes stored the Supabase object path instead of a full URL.
+  if(/^(gallery|events|members|admins|legacy-migration)\//.test(value)){
+    return mediaProxyUrl(MEDIA_BUCKET,value);
+  }
+  if(r2Enabled && value.startsWith(R2_PUBLIC_BASE_URL+'/')) return value;
+  try{
+    if(value.startsWith('/storage/v1/object/')) value=(process.env.SUPABASE_URL||'').replace(/\/$/,'')+value;
+    const u=new URL(value);
+    const base=process.env.SUPABASE_URL?new URL(process.env.SUPABASE_URL):null;
+    if(!base || u.origin!==base.origin) return value;
+    const marker='/storage/v1/object/';
+    const idx=u.pathname.indexOf(marker);
+    if(idx<0) return value;
+    const rest=u.pathname.slice(idx+marker.length);
+    const parts=rest.split('/');
+    const mode=parts.shift();
+    const bucket=parts.shift();
+    if(!bucket || !parts.length || !['public','authenticated','sign'].includes(mode)) return value;
+    const key=parts.map(x=>decodeURIComponent(x)).join('/');
+    return mediaProxyUrl(bucket,key);
+  }catch(_){ return value; }
+}
+function transformImageUrls(value){
+  if(Array.isArray(value)) return value.map(transformImageUrls);
+  if(value && typeof value==='object'){
+    const out={}; for(const [k,v] of Object.entries(value)) out[k]=transformImageUrls(v); return out;
+  }
+  return toMediaProxyUrl(value);
+}
+const originalJson=express.response.json;
+express.response.json=function(body){ return originalJson.call(this,transformImageUrls(body)); };
+
+app.get('/api/media',async(req,res)=>{
+  try{
+    if(!db.supabase) return res.status(404).send('Media storage unavailable.');
+    let bucket=String(req.query.bucket||'').trim();
+    let key=String(req.query.key||'').trim();
+    const raw=String(req.query.url||'').trim();
+    if(raw && (!bucket || !key)){
+      const u=new URL(raw);
+      const base=new URL(process.env.SUPABASE_URL);
+      if(u.origin!==base.origin) return res.status(400).send('Invalid media URL.');
+      const marker='/storage/v1/object/';
+      const idx=u.pathname.indexOf(marker);
+      if(idx<0) return res.status(400).send('Invalid media URL.');
+      const parts=u.pathname.slice(idx+marker.length).split('/');
+      parts.shift();
+      bucket=decodeURIComponent(parts.shift()||'');
+      key=parts.map(decodeURIComponent).join('/');
+    }
+    if(!bucket || !key || bucket.includes('..') || key.includes('..')) return res.status(400).send('Invalid media path.');
+    const {data,error}=await db.supabase.storage.from(bucket).download(key);
+    if(error || !data) return res.status(404).send('Image not found.');
+    const buf=Buffer.from(await data.arrayBuffer());
+    res.set('Content-Type',data.type||'application/octet-stream');
+    res.set('Cache-Control','public, max-age=86400');
+    res.send(buf);
+  }catch(err){ console.error('Media proxy error:',err.message||err); res.status(404).send('Image unavailable.'); }
+});
+await ensureMediaBucket();
 db.exec('CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
 async function storeImageBuffer(buffer,mimetype,folder='uploads'){
-  const ext=({ 'image/jpeg':'jpg','image/png':'png','image/webp':'webp' })[mimetype];
-  if(!ext) throw new Error('Unsupported image format. Please use JPG, PNG, or WebP.');
+  const ext=({ 'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif' })[mimetype];
+  if(!ext) throw new Error('Unsupported image format. Please use JPG, PNG, WebP, or GIF.');
   const key=`${folder}/${Date.now()}-${crypto.randomBytes(8).toString('hex')}.${ext}`;
   if(r2Enabled){
     try{
@@ -37,11 +117,11 @@ async function storeImageBuffer(buffer,mimetype,folder='uploads'){
     }catch(error){ throw new Error(`Cloudflare R2 image storage failed: ${error.message}`); }
   }
   if(db.supabase){
-    const {error}=await db.supabase.storage.from(MEDIA_BUCKET).upload(key,buffer,{contentType:mimetype,upsert:false,cacheControl:'31536000'});
+    const {error}=await db.supabase.storage.from(MEDIA_BUCKET).upload(key,buffer,{contentType:mimetype,upsert:false,cacheControl:'86400'});
     if(error) throw new Error(`Image storage failed: ${error.message}`);
-    const {data}=db.supabase.storage.from(MEDIA_BUCKET).getPublicUrl(key);
-    if(!data?.publicUrl) throw new Error('Image was uploaded but its public URL could not be created.');
-    return data.publicUrl;
+    // Always serve Supabase images through our authenticated server proxy. This avoids
+    // public-bucket/CORS/old-URL problems and works even when the bucket is private.
+    return mediaProxyUrl(MEDIA_BUCKET,key);
   }
   return `data:${mimetype};base64,${Buffer.from(buffer).toString('base64')}`;
 }
