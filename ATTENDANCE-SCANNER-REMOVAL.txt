@@ -1,0 +1,15 @@
+BOYZ OF ROSARIO — ATTENDANCE SCANNER REMOVAL
+
+Removed from the website interface:
+- Admin Scan Attendance QR menu and camera/manual QR scanner panel.
+- Event-specific QR generation button and event QR display status.
+- Member Attendance Check-in / venue-photo-to-event-QR screen.
+- Obsolete standalone event-checkin.html page.
+
+Kept intact:
+- Events & Attendance admin tab and its Attendance button for the current attendance workflow.
+- Member verification page and its per-member verification QR code.
+- Verify Member tools inside the member dashboard.
+- Member records, attendance records, stored photos, and database contents.
+
+No database rows or uploaded media are deleted by this change.

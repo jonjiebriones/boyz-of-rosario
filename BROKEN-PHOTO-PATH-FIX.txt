@@ -1,0 +1,31 @@
+BOYZ OF ROSARIO — BROKEN LEGACY PHOTO PATH FIX
+
+The image URL normalizer in server.js recognized old Supabase Storage object keys
+for gallery, events, members, admins, legacy-migration, and uploads, but omitted
+two folders that the application itself uses:
+- attendance/<event-id>/...
+- site/branding/...
+
+When an older database row contained one of these raw object keys (rather than a
+full Supabase URL or /api/media URL), the frontend received the raw key as an
+image src and the browser could not load it. The normalizer now routes both
+attendance/ and site/ keys through /api/media, which downloads the object from
+the configured Supabase Storage bucket.
+
+No member records, database files, credentials, or environment variables were
+changed. Existing Render/Supabase environment variables should remain as they are.
+
+Apply:
+1. Extract this ZIP.
+2. Copy/replace the project files in your bor_new repository folder. Keep the
+   .git folder and do not replace or upload your private .env file.
+3. Commit and push:
+   git add server.js
+   git commit -m "Fix legacy attendance and site image paths"
+   git push
+4. Wait for Render to deploy, then hard-refresh the site (Ctrl+F5).
+
+This path fix addresses legacy raw Storage keys. If a photo still fails after
+deployment, check the image request in browser DevTools > Network and the Render
+log for /api/media; a 404 means the object is absent from the configured bucket,
+while a 503 means Supabase storage is not configured.
