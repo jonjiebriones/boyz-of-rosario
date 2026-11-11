@@ -1,0 +1,16 @@
+BOYZ OF ROSARIO — EVENT QR ATTENDANCE RESTORED
+
+This version restores the event-specific QR workflow:
+- Admin creates an event and uses Generate Event QR / Show Event QR.
+- Members scan the event QR with their own phone camera.
+- Members choose I HAVE A BADGE or NO BADGE.
+- Badge members enter their registered badge number; no-badge members enter their registered full name.
+- The server verifies that the matching member exists and is approved.
+- The member must confirm that they contributed the event fund and capture/upload a venue photo.
+- Successful submission records the member as PRESENT and stores the fund confirmation and venue photo.
+- Admins can view the attendance list, fund confirmation status, and submitted venue proof.
+
+The old admin-side Scan Attendance QR camera scanner and manual QR input panel remain removed.
+Individual member QR codes on the Verify Member feature remain for legitimate-member verification only.
+
+The fund checkbox records the member's declaration; it is not independent proof of payment.
