@@ -1,0 +1,37 @@
+# Event-day QR attendance flow
+
+## Admin workflow
+1. Open Admin Dashboard > Events.
+2. Create the event with its name and date.
+3. On the actual event date, click **Generate Event QR**.
+4. A new page opens with the event-specific QR code and a print option. Display it on a phone/tablet/monitor or print it at the registration area.
+5. Generating a new QR rotates the event link; any previously generated QR for that event becomes invalid.
+
+## Member workflow
+1. Scan the admin's event QR using the phone camera.
+2. Enter the registered badge number. If the member has no badge yet, leave the badge field blank and enter the exact full name used during registration.
+3. After the registration is verified, tick the event-fund confirmation.
+4. Upload a clear photo taken at the venue.
+5. Tap **Submit & Mark Me Present**. The server saves the photo, fund confirmation, and attendance record before showing success.
+
+## Admin visibility
+The event attendance list displays:
+- Present / absent status
+- Whether the venue photo was submitted (admins can view the photo)
+- Whether the member confirmed giving the event fund
+
+## Fund confirmation note
+The checkbox is a member declaration, not a payment gateway or independently verified receipt. It records that the member says they have given the fund. If you need admins to verify actual payment, a receipt upload or admin approval step must be added.
+
+## Test before the event
+- Generate a QR on a test event.
+- Verify one member using a badge number.
+- Verify a no-badge member using their registered full name.
+- Try an unregistered badge/name and confirm it is rejected.
+- Try submitting without checking the fund box and confirm it is rejected.
+- Try submitting without a venue photo and confirm it is rejected.
+- Submit valid details and confirm the member becomes PRESENT.
+- Scan the same QR again and confirm the system prevents a duplicate check-in.
+- Restart/redeploy and confirm the attendance record and photo remain available.
+
+This feature requires the Render service to have the correct Supabase credentials and working Supabase Storage/database persistence. Render Free can sleep after inactivity, so it cannot guarantee uninterrupted event-day service.

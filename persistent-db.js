@@ -13,8 +13,9 @@ class PersistentSQLite {
     this.localPath = localPath;
     this.db = new SQL.Database(bytes || undefined);
     this.persistTimer = null;
-    this.persisting = false;
-    this.persistAgain = false;
+    this.persistQueue = Promise.resolve();
+    this.changeVersion = 0;
+    this.savedVersion = 0;
     this.initializing = false;
   }
 
@@ -83,41 +84,40 @@ class PersistentSQLite {
 
   schedulePersist() {
     if (this.initializing) return;
+    this.changeVersion += 1;
     clearTimeout(this.persistTimer);
     this.persistTimer = setTimeout(() => {
-      this.persistNow().catch(err => console.error('Supabase database save failed:', err.message));
+      this.persistNow().catch(err => console.error('Persistent database save failed:', err.message || err));
     }, 350);
   }
 
   async persistNow() {
     if (!this.supabase && !this.localPath) return;
-    if (this.persisting) {
-      this.persistAgain = true;
-      return;
-    }
-    this.persisting = true;
-    try {
-      const bytes = this.db.export();
-      if (this.supabase) {
-        const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
-        const { error } = await this.supabase.storage.from(BUCKET).upload(DB_FILE, blob, {
-          contentType: 'application/x-sqlite3',
-          cacheControl: '0',
-          upsert: true
-        });
-        if (error) throw error;
-        console.log('Database saved to Supabase Storage.');
-      } else if (this.localPath) {
-        fs.mkdirSync(path.dirname(this.localPath), { recursive: true });
-        fs.writeFileSync(this.localPath, Buffer.from(bytes));
-      }
-    } finally {
-      this.persisting = false;
-      if (this.persistAgain) {
-        this.persistAgain = false;
-        this.schedulePersist();
-      }
-    }
+    clearTimeout(this.persistTimer);
+    const save = async () => {
+      // If writes occur while an upload is in flight, export and save again
+      // before resolving so callers can safely acknowledge critical actions.
+      do {
+        const version = this.changeVersion;
+        const bytes = this.db.export();
+        if (this.supabase) {
+          const blob = new Blob([bytes], { type: 'application/x-sqlite3' });
+          const { error } = await this.supabase.storage.from(BUCKET).upload(DB_FILE, blob, {
+            contentType: 'application/x-sqlite3',
+            cacheControl: '0',
+            upsert: true
+          });
+          if (error) throw error;
+          console.log('Database saved to Supabase Storage.');
+        } else if (this.localPath) {
+          fs.mkdirSync(path.dirname(this.localPath), { recursive: true });
+          fs.writeFileSync(this.localPath, Buffer.from(bytes));
+        }
+        this.savedVersion = version;
+      } while (this.savedVersion < this.changeVersion);
+    };
+    this.persistQueue = this.persistQueue.then(save, save);
+    return this.persistQueue;
   }
 
   async close() {

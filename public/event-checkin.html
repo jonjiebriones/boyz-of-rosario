@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#160914">
+<title>Boyz of Rosario · Event Check-in</title>
+<style>
+:root{color-scheme:dark;--pink:#ff36b6;--line:#71305e;--panel:#180d19;--muted:#cbb9c9}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top,#38142f 0,#100b13 55%,#080b10 100%);font:16px/1.5 Arial,sans-serif;color:#fff;display:flex;justify-content:center;padding:24px 14px}
+main{width:min(100%,560px);margin:auto}.brand{display:flex;align-items:center;gap:14px;margin-bottom:22px}.brand img{width:58px;height:58px;border-radius:50%;object-fit:cover;border:1px solid #fff;box-shadow:0 0 16px #ff36b688}.brand b{display:block;font-size:19px}.brand small{color:var(--muted);letter-spacing:.04em}
+.card{background:linear-gradient(145deg,#1b101e,#101721);border:1px solid var(--line);border-radius:22px;padding:25px;box-shadow:0 18px 55px #0008}.eyebrow{font-size:12px;letter-spacing:.18em;color:#ff70cc;font-weight:bold}.card h1{font-size:27px;line-height:1.15;margin:9px 0}.muted{color:var(--muted)}label{display:block;font-size:13px;color:#e4cddd;margin:17px 0 7px;font-weight:bold}input[type=text],input[type=file]{width:100%;border:1px solid #6d315c;background:#0b0b12;color:white;border-radius:12px;padding:14px;font:inherit}input:focus{outline:2px solid #ff36b6}button{width:100%;border:0;border-radius:12px;padding:14px 18px;margin-top:18px;background:linear-gradient(100deg,#ff36b6,#b71981);color:#fff;font-weight:bold;font-size:16px;cursor:pointer}button:disabled{opacity:.55;cursor:wait}.note{font-size:13px;color:#cbb9c9;margin-top:7px}.alert{display:none;margin-top:16px;padding:13px;border:1px solid #8c3c76;border-radius:12px;background:#281326;color:#fff}.alert.show{display:block}.member{margin:16px 0;padding:14px;border-radius:12px;border:1px solid #477c62;background:#11251d}.member strong{display:block;font-size:18px}.checkrow{display:flex;align-items:flex-start;gap:11px;margin-top:19px;padding:14px;border:1px solid #71305e;border-radius:12px;background:#160d18}.checkrow input{width:20px;height:20px;flex:none;accent-color:#ff36b6;margin:2px 0}.checkrow label{margin:0;font-size:14px;line-height:1.4}.hidden{display:none!important}.success{text-align:center;padding:20px 4px}.success .tick{font-size:54px;color:#54e39a}.foot{text-align:center;color:#9c8799;font-size:12px;margin-top:18px}
+</style>
+</head>
+<body>
+<main>
+  <header class="brand"><img src="/assets/logo.jpg" alt="Boyz of Rosario logo"><div><b>BOYZ OF ROSARIO</b><small>Engineered for style, Built for the culture</small></div></header>
+  <section class="card">
+    <div class="eyebrow">OFFICIAL EVENT ATTENDANCE</div>
+    <div id="loading"><h1>Loading event…</h1><p class="muted">Please wait while we verify this event QR.</p></div>
+    <div id="invalid" class="hidden"><h1>QR unavailable</h1><p class="muted" id="invalidText">Ask an admin for the current event QR.</p></div>
+    <div id="step1" class="hidden">
+      <h1 id="eventName">Event Check-in</h1><p class="muted" id="eventDate"></p>
+      <p>Confirm your registered membership to continue.</p>
+      <label for="badgeNumber">BADGE NUMBER (leave blank if you do not have one yet)</label>
+      <input id="badgeNumber" type="text" placeholder="Example: 015 or BOR-015" autocomplete="off">
+      <label for="fullName">REGISTERED FULL NAME (required if badge number is blank)</label>
+      <input id="fullName" type="text" placeholder="Enter the name used during registration" autocomplete="name">
+      <p class="note">If you have a badge, enter it above. If you do not have a badge yet, leave that field blank and enter your exact registered full name.</p>
+      <button id="verifyBtn">Verify My Registration</button>
+    </div>
+    <div id="step2" class="hidden">
+      <h1>Complete your check-in</h1>
+      <div class="member"><span class="eyebrow">REGISTRATION VERIFIED</span><strong id="verifiedName"></strong><span id="verifiedBadge" class="muted"></span></div>
+      <p class="muted">Event: <strong id="verifiedEvent"></strong></p>
+      <div class="checkrow"><input id="fundConfirmed" type="checkbox"><label for="fundConfirmed">I confirm that I have already given the required event fund to the Boyz of Rosario organizers.</label></div>
+      <label for="venuePhoto">UPLOAD A PHOTO TAKEN AT THE EVENT VENUE</label>
+      <input id="venuePhoto" type="file" accept="image/jpeg,image/png,image/webp" capture="environment">
+      <p class="note">Upload a clear photo showing that you are at the event. JPG, PNG or WebP; maximum 3 MB.</p>
+      <button id="submitBtn">Submit &amp; Mark Me Present</button>
+      <button id="backBtn" type="button" style="background:#342235;border:1px solid #71305e">Back</button>
+    </div>
+    <div id="done" class="hidden success"><div class="tick">✓</div><h1>You are PRESENT!</h1><p id="doneText" class="muted">Your attendance has been saved.</p></div>
+    <div id="alert" class="alert" role="alert"></div>
+  </section>
+  <div class="foot">Boyz of Rosario · Official attendance portal</div>
+</main>
+<script>
+const token=location.pathname.split('/').filter(Boolean).pop();
+const $=id=>document.getElementById(id);
+let identityToken='',eventInfo=null;
+function show(id){['loading','invalid','step1','step2','done'].forEach(x=>$(x).classList.toggle('hidden',x!==id));}
+function message(text){$('alert').textContent=text;$('alert').classList.add('show')}
+function clearMessage(){$('alert').textContent='';$('alert').classList.remove('show')}
+async function api(url,opts={}){const r=await fetch(url,{...opts,headers:{...(opts.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(opts.headers||{})}});let d;try{d=await r.json()}catch(_){throw new Error('The server returned an unexpected response. Please retry.')}if(!r.ok)throw new Error(d.error||'Request failed.');return d}
+(async()=>{try{eventInfo=await api('/api/event-checkin/'+encodeURIComponent(token));$('eventName').textContent=eventInfo.event.name;$('eventDate').textContent='Event date: '+eventInfo.event.eventDate;show('step1')}catch(e){$('invalidText').textContent=e.message;show('invalid')}})();
+$('verifyBtn').onclick=async()=>{clearMessage();const btn=$('verifyBtn');btn.disabled=true;try{const d=await api('/api/event-checkin/'+encodeURIComponent(token)+'/verify',{method:'POST',body:JSON.stringify({badgeNumber:$('badgeNumber').value.trim(),fullName:$('fullName').value.trim()})});identityToken=d.identityToken;$('verifiedName').textContent=d.member.fullName;$('verifiedBadge').textContent=d.member.badgeNumber||'NO BADGE';$('verifiedEvent').textContent=d.event.name;show('step2')}catch(e){message(e.message)}finally{btn.disabled=false}};
+$('backBtn').onclick=()=>{clearMessage();show('step1')};
+$('submitBtn').onclick=async()=>{clearMessage();if(!$('fundConfirmed').checked)return message('Please confirm that you have given the event fund before submitting.');const file=$('venuePhoto').files[0];if(!file)return message('Please upload a photo taken at the event venue.');if(file.size>3*1024*1024)return message('The photo is too large. Maximum size is 3 MB.');const btn=$('submitBtn');btn.disabled=true;try{const fd=new FormData();fd.append('identityToken',identityToken);fd.append('fundConfirmed','true');fd.append('venuePhoto',file);const d=await api('/api/event-checkin/'+encodeURIComponent(token)+'/submit',{method:'POST',body:fd});$('doneText').textContent=d.member.fullName+' · '+d.event.name+'. Your photo and fund confirmation were saved.';show('done')}catch(e){message(e.message)}finally{btn.disabled=false}};
+</script>
+</body>
+</html>
