@@ -41,31 +41,47 @@ async function ensureMediaBucket(){
 function mediaProxyUrl(bucket,key){
   return `/api/media?bucket=${encodeURIComponent(bucket)}&key=${encodeURIComponent(key)}`;
 }
+function decodeStoragePath(value){
+  if(typeof value!=='string' || !value) return null;
+  const raw=value.trim();
+  // Stored references from older deployments: supabase://bucket/object/key
+  if(raw.startsWith('supabase://')){
+    const rest=raw.slice('supabase://'.length).split('/');
+    const bucket=rest.shift();
+    if(bucket && rest.length) return {bucket,key:rest.map(x=>decodeURIComponent(x)).join('/')};
+  }
+  // A relative Storage URL may have been saved without its host.
+  const relative=raw.match(/^\/?storage\/v1\/object\/(public|authenticated|sign)\/([^/]+)\/(.+)$/i);
+  if(relative) return {bucket:decodeURIComponent(relative[2]),key:relative[3].split('/').map(decodeURIComponent).join('/')};
+  try{
+    const u=new URL(raw,process.env.SUPABASE_URL||'https://invalid.local');
+    const base=process.env.SUPABASE_URL?new URL(process.env.SUPABASE_URL):null;
+    if(base && u.origin===base.origin){
+      const marker='/storage/v1/object/';
+      const idx=u.pathname.indexOf(marker);
+      if(idx>=0){
+        const parts=u.pathname.slice(idx+marker.length).split('/');
+        const mode=parts.shift();
+        const bucket=decodeURIComponent(parts.shift()||'');
+        if(bucket && parts.length && ['public','authenticated','sign'].includes(mode))
+          return {bucket,key:parts.map(decodeURIComponent).join('/')};
+      }
+    }
+  }catch(_){}
+  // Legacy rows stored only the object key, not the bucket name.
+  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) && !raw.startsWith('data:') && !raw.startsWith('/assets/')){
+    const key=raw.replace(/^\/+/, '').replace(/^public\//,'');
+    if(/^(gallery|events|members|admins|legacy-migration|uploads)\//i.test(key)) return {bucket:MEDIA_BUCKET,key};
+  }
+  return null;
+}
 function toMediaProxyUrl(value){
   if(typeof value!=='string' || !value) return value;
-  if(value.startsWith('data:image/')) return value;
-  if(value.startsWith('/api/media?')) return value;
-  // Older versions sometimes stored the Supabase object path instead of a full URL.
-  if(/^(gallery|events|members|admins|legacy-migration)\//.test(value)){
-    return mediaProxyUrl(MEDIA_BUCKET,value);
-  }
-  if(r2Enabled && value.startsWith(R2_PUBLIC_BASE_URL+'/')) return value;
-  try{
-    if(value.startsWith('/storage/v1/object/')) value=(process.env.SUPABASE_URL||'').replace(/\/$/,'')+value;
-    const u=new URL(value);
-    const base=process.env.SUPABASE_URL?new URL(process.env.SUPABASE_URL):null;
-    if(!base || u.origin!==base.origin) return value;
-    const marker='/storage/v1/object/';
-    const idx=u.pathname.indexOf(marker);
-    if(idx<0) return value;
-    const rest=u.pathname.slice(idx+marker.length);
-    const parts=rest.split('/');
-    const mode=parts.shift();
-    const bucket=parts.shift();
-    if(!bucket || !parts.length || !['public','authenticated','sign'].includes(mode)) return value;
-    const key=parts.map(x=>decodeURIComponent(x)).join('/');
-    return mediaProxyUrl(bucket,key);
-  }catch(_){ return value; }
+  const raw=value.trim();
+  if(raw.startsWith('data:image/') || raw.startsWith('/api/media?')) return raw;
+  const ref=decodeStoragePath(raw);
+  if(ref) return mediaProxyUrl(ref.bucket,ref.key);
+  return value;
 }
 function transformImageUrls(value){
   if(Array.isArray(value)) return value.map(transformImageUrls);
@@ -79,30 +95,34 @@ express.response.json=function(body){ return originalJson.call(this,transformIma
 
 app.get('/api/media',async(req,res)=>{
   try{
-    if(!db.supabase) return res.status(404).send('Media storage unavailable.');
+    if(!db.supabase) return res.status(503).send('Supabase media storage is not configured.');
     let bucket=String(req.query.bucket||'').trim();
     let key=String(req.query.key||'').trim();
     const raw=String(req.query.url||'').trim();
     if(raw && (!bucket || !key)){
-      const u=new URL(raw);
-      const base=new URL(process.env.SUPABASE_URL);
-      if(u.origin!==base.origin) return res.status(400).send('Invalid media URL.');
-      const marker='/storage/v1/object/';
-      const idx=u.pathname.indexOf(marker);
-      if(idx<0) return res.status(400).send('Invalid media URL.');
-      const parts=u.pathname.slice(idx+marker.length).split('/');
-      parts.shift();
-      bucket=decodeURIComponent(parts.shift()||'');
-      key=parts.map(decodeURIComponent).join('/');
+      const ref=decodeStoragePath(raw);
+      if(!ref) return res.status(400).send('Invalid media URL.');
+      bucket=ref.bucket; key=ref.key;
     }
     if(!bucket || !key || bucket.includes('..') || key.includes('..')) return res.status(400).send('Invalid media path.');
-    const {data,error}=await db.supabase.storage.from(bucket).download(key);
-    if(error || !data) return res.status(404).send('Image not found.');
+    // Older versions saved photos in the database bucket or the default media bucket.
+    // Try the original bucket first, then known legacy buckets without changing the stored data.
+    const candidates=[...new Set([bucket,MEDIA_BUCKET,process.env.SUPABASE_STORAGE_BUCKET||'boyz-data','boyz-media'])];
+    let data=null, lastError=null, usedBucket='';
+    for(const candidate of candidates){
+      const result=await db.supabase.storage.from(candidate).download(key);
+      if(!result.error && result.data){data=result.data;usedBucket=candidate;break;}
+      lastError=result.error;
+    }
+    if(!data){console.warn('Media object not found:',{bucket,key,error:lastError?.message||'not found'});return res.status(404).send('Image not found in configured Supabase Storage buckets.');}
     const buf=Buffer.from(await data.arrayBuffer());
-    res.set('Content-Type',data.type||'application/octet-stream');
-    res.set('Cache-Control','public, max-age=86400');
+    const ext=path.extname(key).toLowerCase();
+    const inferred=({'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp','.gif':'image/gif'})[ext];
+    res.set('Content-Type',data.type&&data.type!=='application/octet-stream'?data.type:(inferred||'application/octet-stream'));
+    res.set('X-Image-Storage-Bucket',usedBucket);
+    res.set('Cache-Control','public, max-age=3600, stale-while-revalidate=86400');
     res.send(buf);
-  }catch(err){ console.error('Media proxy error:',err.message||err); res.status(404).send('Image unavailable.'); }
+  }catch(err){ console.error('Media proxy error:',err.message||err); res.status(500).send('Image storage request failed.'); }
 });
 await ensureMediaBucket();
 db.exec('CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
