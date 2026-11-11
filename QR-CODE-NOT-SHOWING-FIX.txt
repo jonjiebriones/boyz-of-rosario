@@ -1,0 +1,23 @@
+# QR display fix and event attendance
+
+This update fixes the missing server endpoint that prevented the admin's Generate Event QR button from receiving a QR image. The server now:
+- Adds a persistent attendance_token field to events (safe additive migration).
+- Exposes POST /api/admin/events/:id/attendance-qr for admins.
+- Returns a QR data URL and an absolute event-check-in URL.
+- Serves /event-checkin/:token and the public event metadata endpoint.
+- Verifies approved members by badge number, or by exact registered full name for no-badge members.
+- Requires the fund confirmation checkbox and an event venue photo before saving PRESENT attendance.
+- Stores the photo using the configured persistent image storage and saves attendance/fund confirmation.
+
+## Deploy
+Replace the previous project files with this ZIP, commit and push to GitHub, then deploy the latest commit on Render. Keep your Render environment variables and Supabase/R2 settings unchanged.
+
+## Verify QR display
+1. Sign in to the admin dashboard.
+2. Create or select an event.
+3. Click Generate Event QR.
+4. The QR should appear in a new tab. If the browser blocks popups, allow popups for your Render domain and click again.
+5. Scan the QR with a phone camera. The event check-in page should open.
+
+## Important
+This code is syntax-checked, but still test the complete check-in flow on your live Render service before relying on it for a real event. Test badge and no-badge registration, missing fund confirmation, missing venue photo, successful submission, and duplicate submission.

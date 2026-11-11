@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 const path=require('path'),fs=require('fs'),crypto=require('crypto'),express=require('express'),http=require('http'),helmet=require('helmet'),rateLimit=require('express-rate-limit'),bcrypt=require('bcryptjs'),{Server}=require('socket.io'),multer=require('multer'),QRCode=require('qrcode'),{S3Client,PutObjectCommand,DeleteObjectCommand}=require('@aws-sdk/client-s3');
 const {createPersistentSQLite}=require('./persistent-db');
 
@@ -198,6 +198,9 @@ for(const row of db.prepare('SELECT id FROM members WHERE attendance_token IS NU
   db.prepare('UPDATE members SET attendance_token=? WHERE id=?').run(t,row.id);
 }
 db.exec(`CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,event_date TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,photo_cover TEXT);CREATE TABLE IF NOT EXISTS attendance(id INTEGER PRIMARY KEY AUTOINCREMENT,event_id INTEGER NOT NULL,member_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'present',checked_at TEXT,UNIQUE(event_id,member_id),FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,FOREIGN KEY(member_id) REFERENCES members(id) ON DELETE CASCADE);CREATE TABLE IF NOT EXISTS event_photos(id INTEGER PRIMARY KEY AUTOINCREMENT,event_id INTEGER NOT NULL,photo_data TEXT NOT NULL,original_name TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE);CREATE TABLE IF NOT EXISTS gallery_images(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT,photo_data TEXT NOT NULL,original_name TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);CREATE TABLE IF NOT EXISTS attendance_proofs(id INTEGER PRIMARY KEY AUTOINCREMENT,event_id INTEGER NOT NULL,member_id INTEGER NOT NULL,photo_data TEXT NOT NULL,original_name TEXT,submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(event_id,member_id),FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,FOREIGN KEY(member_id) REFERENCES members(id) ON DELETE CASCADE);`);
+try{db.exec('ALTER TABLE events ADD COLUMN attendance_token TEXT')}catch(e){}
+try{db.exec('ALTER TABLE attendance ADD COLUMN fund_confirmed INTEGER NOT NULL DEFAULT 0')}catch(e){}
+const eventCheckinIdentities=new Map();
 db.exec(`CREATE TABLE IF NOT EXISTS motorcycle_photo_change_requests(id INTEGER PRIMARY KEY AUTOINCREMENT,member_id INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending',requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_at TEXT,reviewed_by INTEGER,FOREIGN KEY(member_id) REFERENCES members(id) ON DELETE CASCADE);`);
 try{db.exec("ALTER TABLE events ADD COLUMN photo_cover TEXT")}catch(e){} db.exec(`CREATE TABLE IF NOT EXISTS admin_profiles(id INTEGER PRIMARY KEY AUTOINCREMENT,full_name TEXT UNIQUE NOT NULL,badge_number TEXT UNIQUE,profile_photo TEXT,facebook_url TEXT,instagram_url TEXT,tiktok_url TEXT,youtube_url TEXT,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`); for(const [col,sql] of [['badge_number',"ALTER TABLE admin_profiles ADD COLUMN badge_number TEXT"],['profile_photo',"ALTER TABLE admin_profiles ADD COLUMN profile_photo TEXT"],['motorcycle_photo',"ALTER TABLE admin_profiles ADD COLUMN motorcycle_photo TEXT"],['facebook_url',"ALTER TABLE admin_profiles ADD COLUMN facebook_url TEXT"],['instagram_url',"ALTER TABLE admin_profiles ADD COLUMN instagram_url TEXT"],['tiktok_url',"ALTER TABLE admin_profiles ADD COLUMN tiktok_url TEXT"],['youtube_url',"ALTER TABLE admin_profiles ADD COLUMN youtube_url TEXT"],['position',"ALTER TABLE admin_profiles ADD COLUMN position TEXT"]]){try{db.exec(sql)}catch(e){}} try{db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_profiles_badge ON admin_profiles(badge_number) WHERE badge_number IS NOT NULL")}catch(e){console.error('Admin badge index error:',e.message)};
 // Database persistence is handled by persistent-db.js through Supabase Storage.
@@ -279,7 +282,74 @@ app.get('/api/admin/motorcycle-photo-requests',requireAdmin,(req,res)=>res.json(
 app.post('/api/admin/motorcycle-photo-requests/:id/approve',requireAdmin,(req,res)=>{const r=db.prepare("SELECT * FROM motorcycle_photo_change_requests WHERE id=? AND status='pending'").get(req.params.id);if(!r)return res.status(404).json({error:'Pending request not found.'});const tx=db.transaction(()=>{db.prepare("UPDATE motorcycle_photo_change_requests SET status='approved',reviewed_at=CURRENT_TIMESTAMP,reviewed_by=? WHERE id=?").run(req.admin.adminId,r.id);db.prepare('UPDATE members SET motorcycle_photo_extra_credits=motorcycle_photo_extra_credits+1 WHERE id=?').run(r.member_id)});tx();io.to('members-live').emit('motorcycle-photo:access',{memberId:r.member_id});res.json({ok:true,message:'One motorcycle-photo change was approved.'})});
 app.post('/api/admin/motorcycle-photo-requests/:id/deny',requireAdmin,(req,res)=>{const r=db.prepare("SELECT * FROM motorcycle_photo_change_requests WHERE id=? AND status='pending'").get(req.params.id);if(!r)return res.status(404).json({error:'Pending request not found.'});db.prepare("UPDATE motorcycle_photo_change_requests SET status='denied',reviewed_at=CURRENT_TIMESTAMP,reviewed_by=? WHERE id=?").run(req.admin.adminId,r.id);res.json({ok:true})});
 
-app.get('/api/admin/events',requireAdmin,(req,res)=>res.json(db.prepare(`SELECT e.id,e.name,e.event_date,e.created_at,e.photo_cover,COUNT(a.id) marked,COALESCE(SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END),0) present,(SELECT COUNT(*) FROM event_photos p WHERE p.event_id=e.id) photo_count FROM events e LEFT JOIN attendance a ON a.event_id=e.id GROUP BY e.id ORDER BY e.event_date DESC,e.id DESC`).all()));app.post('/api/admin/events',requireAdmin,(req,res)=>{const {name,eventDate}=req.body||{};if(!name||!eventDate)return res.status(400).json({error:'Event name and date are required.'});const x=db.prepare('INSERT INTO events(name,event_date) VALUES(?,?)').run(String(name).trim(),String(eventDate));res.status(201).json({ok:true,id:x.lastInsertRowid})});app.delete('/api/admin/events/:id',requireAdmin,(req,res)=>{db.prepare('DELETE FROM attendance WHERE event_id=?').run(req.params.id);db.prepare('DELETE FROM event_photos WHERE event_id=?').run(req.params.id);db.prepare('DELETE FROM attendance_proofs WHERE event_id=?').run(req.params.id);db.prepare('DELETE FROM events WHERE id=?').run(req.params.id);res.json({ok:true})});app.get('/api/admin/events/:id/attendance',requireAdmin,(req,res)=>res.json(db.prepare(`SELECT m.id,m.badge_number,m.full_name,m.nickname,COALESCE(a.status,'absent') attendance_status,a.checked_at,CASE WHEN p.id IS NULL THEN 0 ELSE 1 END has_proof,p.submitted_at proof_submitted_at FROM members m LEFT JOIN attendance a ON a.member_id=m.id AND a.event_id=? LEFT JOIN attendance_proofs p ON p.member_id=m.id AND p.event_id=? ORDER BY CASE WHEN m.badge_number IS NULL THEN 1 ELSE 0 END,m.badge_number,m.full_name`).all(req.params.id,req.params.id)));app.get('/api/admin/events/:eventId/members/:memberId/proof',requireAdmin,(req,res)=>{const p=db.prepare(`SELECT p.id,p.photo_data,p.original_name,p.submitted_at,m.full_name,m.badge_number,e.name event_name,e.event_date FROM attendance_proofs p JOIN members m ON m.id=p.member_id JOIN events e ON e.id=p.event_id WHERE p.event_id=? AND p.member_id=?`).get(req.params.eventId,req.params.memberId);if(!p)return res.status(404).json({error:'No venue photo submitted for this member and event.'});res.json(p)});app.post('/api/admin/events/:id/attendance',requireAdmin,(req,res)=>{const {memberId,status}=req.body||{},m=db.prepare('SELECT id FROM members WHERE id=?').get(memberId),e=db.prepare('SELECT id FROM events WHERE id=?').get(req.params.id);if(!m||!e||!['present','absent'].includes(status))return res.status(400).json({error:'Invalid member, event, or attendance status.'});if(status==='present'&&!db.prepare('SELECT id FROM attendance_proofs WHERE event_id=? AND member_id=?').get(e.id,m.id))return res.status(400).json({error:'Venue photo required. The member must capture and submit a photo at the venue before being marked present.'});db.prepare(`INSERT INTO attendance(event_id,member_id,status,checked_at) VALUES(?,?,?,?) ON CONFLICT(event_id,member_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at`).run(e.id,m.id,status,status==='present'?new Date().toISOString():null);res.json({ok:true})});
+app.post('/api/admin/events/:id/attendance-qr',requireAdmin,async(req,res)=>{
+  try{
+    const eventId=Number(req.params.id);
+    if(!Number.isSafeInteger(eventId)||eventId<1)return res.status(400).json({error:'Invalid event.'});
+    const event=db.prepare('SELECT id,name,event_date,attendance_token FROM events WHERE id=?').get(eventId);
+    if(!event)return res.status(404).json({error:'Event not found.'});
+    let token=event.attendance_token;
+    if(!token){token=crypto.randomBytes(24).toString('hex');db.prepare('UPDATE events SET attendance_token=? WHERE id=?').run(token,eventId);}
+    if(typeof db.persistNow==='function')await db.persistNow();
+    const host=String(req.get('x-forwarded-host')||req.get('host')||'').split(',')[0].trim();
+    const proto=String(req.get('x-forwarded-proto')||req.protocol||'https').split(',')[0].trim();
+    const url=`${proto}://${host}/event-checkin/${token}`;
+    const qrCode=await QRCode.toDataURL(url,{width:420,margin:2,errorCorrectionLevel:'H'});
+    return res.json({ok:true,qrCode,url,event:{id:event.id,name:event.name,eventDate:event.event_date}});
+  }catch(err){console.error('Event QR generation error:',err);return res.status(500).json({error:'Unable to generate event QR code. '+String(err.message||'').slice(0,160)})}
+});
+app.get('/event-checkin/:token',(req,res)=>{
+  res.set('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.sendFile(path.join(__dirname,'public','event-checkin.html'));
+});
+app.get('/api/event-checkin/:token',(req,res)=>{
+  const event=db.prepare('SELECT id,name,event_date FROM events WHERE attendance_token=?').get(String(req.params.token||''));
+  if(!event)return res.status(404).json({error:'This event QR is invalid or has been replaced.'});
+  res.json({ok:true,event:{id:event.id,name:event.name,eventDate:event.event_date}});
+});
+app.post('/api/event-checkin/:token/verify',(req,res)=>{
+  try{
+    const event=db.prepare('SELECT id,name,event_date FROM events WHERE attendance_token=?').get(String(req.params.token||''));
+    if(!event)return res.status(404).json({error:'This event QR is invalid or has been replaced.'});
+    const badge=String(req.body?.badgeNumber||'').trim().toUpperCase().replace(/^BOR[-\\s]*/,'');
+    const name=String(req.body?.fullName||'').trim();
+    if(!badge&&!name)return res.status(400).json({error:'Enter your badge number or your registered full name.'});
+    let member=null;
+    if(badge){
+      member=db.prepare("SELECT id,badge_number,full_name,status FROM members WHERE UPPER(REPLACE(REPLACE(badge_number,'BOR-',''),'BOR',''))=?").get(badge);
+    }else{
+      member=db.prepare("SELECT id,badge_number,full_name,status FROM members WHERE lower(trim(full_name))=lower(trim(?)) AND (badge_number IS NULL OR badge_number='')").get(name);
+    }
+    if(!member)return res.status(404).json({error:'No matching registration was found. Check your details or contact an admin.'});
+    if(member.status!=='approved')return res.status(403).json({error:'Your membership is not approved yet. Please contact an admin.'});
+    const already=db.prepare('SELECT status FROM attendance WHERE event_id=? AND member_id=?').get(event.id,member.id);
+    if(already?.status==='present')return res.status(409).json({error:'Your attendance has already been submitted for this event.'});
+    const identityToken=crypto.randomBytes(24).toString('hex');
+    eventCheckinIdentities.set(identityToken,{eventId:event.id,memberId:member.id,expires:Date.now()+15*60*1000});
+    res.json({ok:true,identityToken,member:{fullName:member.full_name,badgeNumber:member.badge_number||'NO BADGE'},event:{name:event.name}});
+  }catch(err){console.error('Event check-in verification:',err);res.status(500).json({error:'Unable to verify your registration right now.'})}
+});
+app.post('/api/event-checkin/:token/submit',upload.single('venuePhoto'),async(req,res)=>{
+  try{
+    const event=db.prepare('SELECT id,name FROM events WHERE attendance_token=?').get(String(req.params.token||''));
+    if(!event)return res.status(404).json({error:'This event QR is invalid or has been replaced.'});
+    const identity=eventCheckinIdentities.get(String(req.body?.identityToken||''));
+    if(!identity||identity.eventId!==event.id||identity.expires<Date.now())return res.status(401).json({error:'Your verification expired. Please verify your registration again.'});
+    if(String(req.body?.fundConfirmed)!=='true')return res.status(400).json({error:'Please confirm that you have given the event fund.'});
+    if(!req.file)return res.status(400).json({error:'Upload a photo taken at the event venue.'});
+    const member=db.prepare('SELECT id,status,full_name FROM members WHERE id=?').get(identity.memberId);
+    if(!member||member.status!=='approved')return res.status(403).json({error:'Approved member registration not found.'});
+    const photo=await storeImage(req.file,'events/attendance');
+    db.prepare('INSERT INTO attendance_proofs(event_id,member_id,photo_data,original_name) VALUES(?,?,?,?) ON CONFLICT(event_id,member_id) DO UPDATE SET photo_data=excluded.photo_data,original_name=excluded.original_name,submitted_at=CURRENT_TIMESTAMP').run(event.id,member.id,photo,req.file.originalname||'venue-photo');
+    db.prepare("INSERT INTO attendance(event_id,member_id,status,checked_at,fund_confirmed) VALUES(?,?,'present',?,1) ON CONFLICT(event_id,member_id) DO UPDATE SET status='present',checked_at=excluded.checked_at,fund_confirmed=1").run(event.id,member.id,new Date().toISOString());
+    if(typeof db.persistNow==='function')await db.persistNow();
+    eventCheckinIdentities.delete(String(req.body.identityToken));
+    io.to('admins').emit('members:changed');
+    res.json({ok:true,member:{fullName:member.full_name},event:{name:event.name}});
+  }catch(err){console.error('Event attendance submission:',err);res.status(500).json({error:'Unable to save attendance. '+String(err.message||'').slice(0,140)})}
+});
+
+app.get('/api/admin/events',requireAdmin,(req,res)=>res.json(db.prepare(`SELECT e.id,e.name,e.event_date,e.created_at,e.photo_cover,CASE WHEN e.attendance_token IS NULL OR e.attendance_token='' THEN 0 ELSE 1 END qr_generated,COUNT(a.id) marked,COALESCE(SUM(CASE WHEN a.status='present' THEN 1 ELSE 0 END),0) present,(SELECT COUNT(*) FROM event_photos p WHERE p.event_id=e.id) photo_count FROM events e LEFT JOIN attendance a ON a.event_id=e.id GROUP BY e.id ORDER BY e.event_date DESC,e.id DESC`).all()));app.post('/api/admin/events',requireAdmin,(req,res)=>{const {name,eventDate}=req.body||{};if(!name||!eventDate)return res.status(400).json({error:'Event name and date are required.'});const x=db.prepare('INSERT INTO events(name,event_date) VALUES(?,?)').run(String(name).trim(),String(eventDate));res.status(201).json({ok:true,id:x.lastInsertRowid})});app.delete('/api/admin/events/:id',requireAdmin,(req,res)=>{db.prepare('DELETE FROM attendance WHERE event_id=?').run(req.params.id);db.prepare('DELETE FROM event_photos WHERE event_id=?').run(req.params.id);db.prepare('DELETE FROM attendance_proofs WHERE event_id=?').run(req.params.id);db.prepare('DELETE FROM events WHERE id=?').run(req.params.id);res.json({ok:true})});app.get('/api/admin/events/:id/attendance',requireAdmin,(req,res)=>res.json(db.prepare(`SELECT m.id,m.badge_number,m.full_name,m.nickname,COALESCE(a.status,'absent') attendance_status,a.checked_at,COALESCE(a.fund_confirmed,0) fund_confirmed,CASE WHEN p.id IS NULL THEN 0 ELSE 1 END has_proof,p.submitted_at proof_submitted_at FROM members m LEFT JOIN attendance a ON a.member_id=m.id AND a.event_id=? LEFT JOIN attendance_proofs p ON p.member_id=m.id AND p.event_id=? ORDER BY CASE WHEN m.badge_number IS NULL THEN 1 ELSE 0 END,m.badge_number,m.full_name`).all(req.params.id,req.params.id)));app.get('/api/admin/events/:eventId/members/:memberId/proof',requireAdmin,(req,res)=>{const p=db.prepare(`SELECT p.id,p.photo_data,p.original_name,p.submitted_at,m.full_name,m.badge_number,e.name event_name,e.event_date FROM attendance_proofs p JOIN members m ON m.id=p.member_id JOIN events e ON e.id=p.event_id WHERE p.event_id=? AND p.member_id=?`).get(req.params.eventId,req.params.memberId);if(!p)return res.status(404).json({error:'No venue photo submitted for this member and event.'});res.json(p)});app.post('/api/admin/events/:id/attendance',requireAdmin,(req,res)=>{const {memberId,status}=req.body||{},m=db.prepare('SELECT id FROM members WHERE id=?').get(memberId),e=db.prepare('SELECT id FROM events WHERE id=?').get(req.params.id);if(!m||!e||!['present','absent'].includes(status))return res.status(400).json({error:'Invalid member, event, or attendance status.'});if(status==='present'&&!db.prepare('SELECT id FROM attendance_proofs WHERE event_id=? AND member_id=?').get(e.id,m.id))return res.status(400).json({error:'Venue photo required. The member must capture and submit a photo at the venue before being marked present.'});db.prepare(`INSERT INTO attendance(event_id,member_id,status,checked_at) VALUES(?,?,?,?) ON CONFLICT(event_id,member_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at`).run(e.id,m.id,status,status==='present'?new Date().toISOString():null);res.json({ok:true})});
 app.post('/api/admin/events/:id/scan-attendance',requireAdmin,async(req,res)=>{
   try{
     const eventId=Number(req.params.id);
