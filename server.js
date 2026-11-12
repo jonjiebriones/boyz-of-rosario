@@ -1,5 +1,5 @@
-﻿require('dotenv').config();
-const path=require('path'),fs=require('fs'),crypto=require('crypto'),express=require('express'),http=require('http'),helmet=require('helmet'),rateLimit=require('express-rate-limit'),bcrypt=require('bcryptjs'),{Server}=require('socket.io'),multer=require('multer'),QRCode=require('qrcode'),{S3Client,PutObjectCommand,DeleteObjectCommand}=require('@aws-sdk/client-s3');
+require('dotenv').config();
+const path=require('path'),fs=require('fs'),crypto=require('crypto'),express=require('express'),http=require('http'),helmet=require('helmet'),rateLimit=require('express-rate-limit'),bcrypt=require('bcryptjs'),{Server}=require('socket.io'),multer=require('multer'),QRCode=require('qrcode'),{S3Client,PutObjectCommand,GetObjectCommand,DeleteObjectCommand}=require('@aws-sdk/client-s3');
 const {createPersistentSQLite}=require('./persistent-db');
 
 (async()=>{
@@ -22,7 +22,8 @@ const dataDir='supabase://'+(process.env.SUPABASE_STORAGE_BUCKET||'boyz-data');
 const MEDIA_BUCKET=process.env.SUPABASE_MEDIA_BUCKET||'boyz-media';
 const R2_BUCKET=String(process.env.R2_BUCKET||'').trim();
 const R2_PUBLIC_BASE_URL=String(process.env.R2_PUBLIC_BASE_URL||'').trim().replace(/\/$/,'');
-const r2Enabled=!!(process.env.R2_ENDPOINT&&process.env.R2_ACCESS_KEY_ID&&process.env.R2_SECRET_ACCESS_KEY&&R2_BUCKET&&R2_PUBLIC_BASE_URL);
+// R2 media is always served through this Render app. A public r2.dev URL is optional.
+const r2Enabled=!!(process.env.R2_ENDPOINT&&process.env.R2_ACCESS_KEY_ID&&process.env.R2_SECRET_ACCESS_KEY&&R2_BUCKET);
 const r2=r2Enabled?new S3Client({region:'auto',endpoint:String(process.env.R2_ENDPOINT).trim(),credentials:{accessKeyId:String(process.env.R2_ACCESS_KEY_ID).trim(),secretAccessKey:String(process.env.R2_SECRET_ACCESS_KEY).trim()}}):null;
 if(r2Enabled) console.log(`Cloudflare R2 image storage enabled: ${R2_BUCKET}`); else console.log('Cloudflare R2 image storage not configured; using Supabase image storage fallback.');
 
@@ -44,6 +45,12 @@ function mediaProxyUrl(bucket,key){
 function decodeStoragePath(value){
   if(typeof value!=='string' || !value) return null;
   const raw=value.trim();
+  // New private reference format: r2://bucket/object/key. Never expose the R2 hostname to visitors.
+  if(raw.startsWith('r2://')){
+    const rest=raw.slice('r2://'.length).split('/');
+    const bucket=rest.shift();
+    if(bucket && rest.length) return {bucket:'r2',key:rest.map(x=>decodeURIComponent(x)).join('/')};
+  }
   // Stored references from older deployments: supabase://bucket/object/key
   if(raw.startsWith('supabase://')){
     const rest=raw.slice('supabase://'.length).split('/');
@@ -65,6 +72,14 @@ function decodeStoragePath(value){
         const bucket=decodeURIComponent(parts.shift()||'');
         if(bucket && parts.length && ['public','authenticated','sign'].includes(mode))
           return {bucket,key:parts.map(decodeURIComponent).join('/')};
+      }
+    }
+    // Migrate previously stored public R2 URLs to same-origin proxy URLs.
+    if(R2_PUBLIC_BASE_URL){
+      const r2Base=new URL(R2_PUBLIC_BASE_URL);
+      if(u.origin===r2Base.origin){
+        const key=u.pathname.replace(/^\/+/, '').split('/').map(decodeURIComponent).join('/');
+        if(key) return {bucket:'r2',key};
       }
     }
   }catch(_){}
@@ -95,7 +110,6 @@ express.response.json=function(body){ return originalJson.call(this,transformIma
 
 app.get('/api/media',async(req,res)=>{
   try{
-    if(!db.supabase) return res.status(503).send('Supabase media storage is not configured.');
     let bucket=String(req.query.bucket||'').trim();
     let key=String(req.query.key||'').trim();
     const raw=String(req.query.url||'').trim();
@@ -104,7 +118,23 @@ app.get('/api/media',async(req,res)=>{
       if(!ref) return res.status(400).send('Invalid media URL.');
       bucket=ref.bucket; key=ref.key;
     }
-    if(!bucket || !key || bucket.includes('..') || key.includes('..')) return res.status(400).send('Invalid media path.');
+    if(!bucket || !key || bucket.includes('..') || key.includes('..') || key.startsWith('/')) return res.status(400).send('Invalid media path.');
+    const ext=path.extname(key).toLowerCase();
+    const inferred=({'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp','.gif':'image/gif'})[ext]||'application/octet-stream';
+    // R2 files are fetched privately by the server. Visitors never contact r2.dev,
+    // so photos work on mobile data, other Wi-Fi networks, and browsers with different DNS.
+    if(bucket==='r2'){
+      if(!r2Enabled) return res.status(503).send('Cloudflare R2 storage is not configured on the server.');
+      const object=await r2.send(new GetObjectCommand({Bucket:R2_BUCKET,Key:key}));
+      const buf=object.Body ? Buffer.from(await object.Body.transformToByteArray()) : Buffer.alloc(0);
+      res.set('Content-Type',object.ContentType||inferred);
+      if(object.ContentLength!=null) res.set('Content-Length',String(object.ContentLength));
+      if(object.ETag) res.set('ETag',object.ETag);
+      res.set('X-Image-Storage','cloudflare-r2-proxy');
+      res.set('Cache-Control','public, max-age=3600, stale-while-revalidate=86400');
+      return res.send(buf);
+    }
+    if(!db.supabase) return res.status(503).send('Supabase media storage is not configured.');
     // Older versions saved photos in the database bucket or the default media bucket.
     // Try the original bucket first, then known legacy buckets without changing the stored data.
     const candidates=[...new Set([bucket,MEDIA_BUCKET,process.env.SUPABASE_STORAGE_BUCKET||'boyz-data','boyz-media'])];
@@ -116,13 +146,15 @@ app.get('/api/media',async(req,res)=>{
     }
     if(!data){console.warn('Media object not found:',{bucket,key,error:lastError?.message||'not found'});return res.status(404).send('Image not found in configured Supabase Storage buckets.');}
     const buf=Buffer.from(await data.arrayBuffer());
-    const ext=path.extname(key).toLowerCase();
-    const inferred=({'.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp','.gif':'image/gif'})[ext];
-    res.set('Content-Type',data.type&&data.type!=='application/octet-stream'?data.type:(inferred||'application/octet-stream'));
+    res.set('Content-Type',data.type&&data.type!=='application/octet-stream'?data.type:inferred);
     res.set('X-Image-Storage-Bucket',usedBucket);
     res.set('Cache-Control','public, max-age=3600, stale-while-revalidate=86400');
     res.send(buf);
-  }catch(err){ console.error('Media proxy error:',err.message||err); res.status(500).send('Image storage request failed.'); }
+  }catch(err){
+    const status=err?.$metadata?.httpStatusCode===404 || err?.name==='NoSuchKey' ? 404 : 500;
+    console.error('Media proxy error:',err.message||err);
+    res.status(status).send(status===404?'Image not found in configured storage.':'Image storage request failed.');
+  }
 });
 await ensureMediaBucket();
 db.exec('CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
@@ -133,7 +165,8 @@ async function storeImageBuffer(buffer,mimetype,folder='uploads'){
   if(r2Enabled){
     try{
       await r2.send(new PutObjectCommand({Bucket:R2_BUCKET,Key:key,Body:buffer,ContentType:mimetype,CacheControl:'public, max-age=31536000, immutable'}));
-      return `${R2_PUBLIC_BASE_URL}/${key.split('/').map(encodeURIComponent).join('/')}`;
+      // Store an internal reference; API responses convert it to /api/media on this domain.
+      return `r2://${R2_BUCKET}/${key.split('/').map(encodeURIComponent).join('/')}`;
     }catch(error){ throw new Error(`Cloudflare R2 image storage failed: ${error.message}`); }
   }
   if(db.supabase){
@@ -151,9 +184,10 @@ async function storeImage(file,folder='uploads'){
 }
 
 async function deleteStoredImage(imageUrl){
-  if(!r2Enabled||!imageUrl||!imageUrl.startsWith(R2_PUBLIC_BASE_URL+'/')) return;
-  const key=decodeURIComponent(imageUrl.slice((R2_PUBLIC_BASE_URL+'/').length));
-  try{await r2.send(new DeleteObjectCommand({Bucket:R2_BUCKET,Key:key}));}catch(error){console.warn('R2 image delete failed:',error.message||error)}
+  if(!r2Enabled||!imageUrl) return;
+  const ref=decodeStoragePath(imageUrl);
+  if(!ref||ref.bucket!=='r2') return;
+  try{await r2.send(new DeleteObjectCommand({Bucket:R2_BUCKET,Key:ref.key}));}catch(error){console.warn('R2 image delete failed:',error.message||error)}
 }
 
 

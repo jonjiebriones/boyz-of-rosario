@@ -32,11 +32,11 @@ Copy the Access Key ID and Secret Access Key. The secret cannot be viewed again 
 
 ## 3. Enable public read access
 
-Because the portal displays these images directly in normal `<img>` elements, the bucket needs a public read URL.
+The application now retrieves R2 objects privately from the Render server and serves them through the same website domain at `/api/media`. Visitors' phones and browsers do not need to resolve or contact the R2 public hostname. A public bucket URL is not required for new uploads.
 
-For a quick setup, enable the bucket's **Public Development URL (r2.dev)**. For production, use a custom domain connected to the bucket.
+Keep the existing `r2.dev` URL in `R2_PUBLIC_BASE_URL` temporarily so the application can recognize and proxy image URLs saved by older deployments. For production, you may later replace it with a custom domain, but it is not used for new photo delivery.
 
-Copy the resulting public URL, for example:
+Example legacy public URL:
 
 `https://<your-bucket-subdomain>.r2.dev`
 
@@ -49,6 +49,7 @@ R2_ENDPOINT=https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com
 R2_ACCESS_KEY_ID=YOUR_R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY=YOUR_R2_SECRET_ACCESS_KEY
 R2_BUCKET=boyz-of-rosario-media
+# Optional: legacy public URL, used to translate old stored links into same-origin proxy URLs.
 R2_PUBLIC_BASE_URL=https://YOUR_PUBLIC_R2_DOMAIN
 ```
 
@@ -56,7 +57,7 @@ Keep your existing Supabase variables because the current app uses Supabase Stor
 
 ## 5. Deploy
 
-After Render redeploys, new image uploads will go directly to R2. Existing Supabase image URLs are not automatically deleted, so existing photos continue to work.
+After Render redeploys, new image uploads will go directly to R2, but the database stores an internal `r2://` reference and API responses expose only the same-origin `/api/media` proxy URL. Older saved `r2.dev` links are also translated to the proxy, so mobile users and other networks do not depend on their local DNS resolving the R2 hostname. Existing Supabase image URLs continue to use the Supabase proxy.
 
 If R2 is not configured, this code safely falls back to the existing Supabase media bucket.
 

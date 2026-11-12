@@ -1,0 +1,38 @@
+BOYZ OF ROSARIO — CROSS-NETWORK PHOTO DELIVERY FIX
+
+WHAT CHANGED
+- New R2 uploads are stored using an internal r2://bucket/key reference.
+- API responses translate those references into same-origin /api/media URLs.
+- Render fetches image objects privately from Cloudflare R2 using the server-side S3 credentials.
+- Existing direct r2.dev image URLs are recognized and translated to the same-origin proxy.
+- Supabase-backed image URLs continue to use the existing proxy path.
+- The public r2.dev hostname is no longer contacted by visitors' browsers for new or recognized legacy images.
+- R2_PUBLIC_BASE_URL is optional for new uploads, but keep its current value in Render until legacy direct URLs have been migrated/checked.
+
+WHY THIS HELPS
+A member's phone or another Wi-Fi/mobile network only needs to reach the public Boyz of Rosario website. It no longer needs its DNS resolver to resolve the Cloudflare r2.dev development hostname.
+
+RENDER ENVIRONMENT
+Keep these server-side variables set correctly:
+R2_ENDPOINT
+R2_ACCESS_KEY_ID
+R2_SECRET_ACCESS_KEY
+R2_BUCKET
+R2_PUBLIC_BASE_URL (keep current value for legacy URL conversion)
+SUPABASE_URL and SUPABASE_SECRET_KEY (the app's persistent database still uses Supabase)
+
+DEPLOY
+1. Extract this ZIP.
+2. Copy the contents of bor-attendance-edit into the existing bor_deploy project folder and replace files.
+3. Keep the existing .git folder and all Render environment variables.
+4. Run:
+   git add -A
+   git commit -m "Serve R2 photos through same-origin media proxy"
+   git push
+5. Wait for Render to show Live.
+6. Test the gallery on a phone using mobile data and on a different Wi-Fi network.
+
+DO NOT delete the R2 bucket, Supabase bucket, or existing objects. Do not expose R2 secret keys in GitHub or chat.
+
+VALIDATION
+server.js passed `node --check`. This package does not include live Render/R2 credentials, so the final deployed image delivery must be tested on the website after deployment.
